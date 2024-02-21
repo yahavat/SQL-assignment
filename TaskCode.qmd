@@ -1,0 +1,109 @@
+---
+title: "SQL task"
+format: html
+self-contained: true
+toc: true
+---
+```{r}
+#| warning: false
+library(DBI)
+library(dplyr)
+library(dbplyr)
+library(odbc)
+con_chocolate <- DBI::dbConnect(drv = RSQLite::SQLite(),
+dbname = "chocolate.sqlite")
+
+```
+
+# Q1
+1. The client inquired about the details of the customer of spent the most during 2023
+
+- the data scientist first constructed a CTE that included the identifier of the customers (taken from orders table), and he computed the expenditure of each transaction (by multiplying the amount [taken from orders] with the price [taken from products ]).
+
+- The price was extracted from the products table using the common variable (to orders and products) - cid.
+
+- Then, they filtered the data to include only purchases from 2023. Then they grouped the data by the customer identifier, to calculate the total expenditure per customer rather than per purchase (achieved by the SUM aggregate function).
+
+- After constructing the CTE, the data scientist utilized it by selecting all the variables in the CTE. Additionally, they joined all the variables from the customers table (by matching the common variable cid)
+
+- At this point the data scientist had a table containing all available information regarding the customers and their yearly expenditure (during 2023). Finally, they sorted the table by expenditure in descending order and limited the results to only the top observation,  highlighting the top-spending customer
+
+
+
+2. Running the query
+``` {sql, connection=con_chocolate, output.var = "Q1"}
+WITH total_orders AS (
+SELECT cid, SUM(Price * amount) AS sum_total
+FROM `orders`
+LEFT JOIN products USING (pid)
+WHERE (sale_date > '2023-01-01')
+GROUP BY cid
+)
+SELECT *
+FROM total_orders
+LEFT JOIN customers USING (cid)
+ORDER BY sum_total DESC
+LIMIT 1
+```
+
+```{r}
+#| echo: false
+print(Q1)
+```
+# Q2
+``` {sql, connection=con_chocolate, output.var = "Q2"}
+
+WITH AidTable AS (
+    SELECT srid, Name, year_joined, SUM(Price * amount) AS sum_sales
+    FROM salesreps
+    LEFT JOIN orders USING (srid)
+    LEFT JOIN products USING (pid)
+    GROUP BY srid, Name, year_joined
+),
+YearlyAverage AS (
+    SELECT Name, year_joined, sum_sales, AVG(sum_sales) OVER (PARTITION BY year_joined) AS average_sales
+    FROM AidTable
+),
+Best_rep AS (
+    SELECT AidTable.Name, AidTable.sum_sales AS total_sales, (AidTable.sum_sales - YearlyAverage.average_sales) AS discrepancy
+    FROM AidTable
+    INNER JOIN YearlyAverage ON AidTable.Name = YearlyAverage.Name AND AidTable.year_joined = YearlyAverage.year_joined
+),
+best_costumer AS (
+    SELECT srid, cid, SUM(Price * amount) AS sum_total
+    FROM `orders`
+    LEFT JOIN products USING (pid)
+    GROUP BY srid, cid
+),
+best_costumer_grouped AS( 
+    SELECT salesreps.Name AS salesrep_name, customers.Name AS customer_name, MAX(best_costumer.sum_total) AS purchases
+    FROM salesreps
+    LEFT JOIN best_costumer ON salesreps.srid = best_costumer.srid
+    LEFT JOIN customers ON best_costumer.cid = customers.cid
+    GROUP BY salesreps.Name
+),
+amount_candy AS (
+    SELECT srid, candy_names, SUM(amount) AS amount_total
+    FROM products
+    LEFT JOIN orders USING (pid)
+    GROUP BY srid, candy_names
+),
+amount_candy_grouped AS (
+    SELECT salesreps.Name AS salesrep_name, amount_candy.candy_names, MAX(amount_total) AS num_of_bars
+    FROM salesreps
+    LEFT JOIN amount_candy ON salesreps.srid = amount_candy.srid
+    GROUP BY salesreps.Name
+)
+SELECT Best_rep.Name, total_sales, discrepancy, customer_name, purchases, candy_names, num_of_bars 
+FROM Best_rep
+LEFT JOIN best_costumer_grouped ON Best_rep.Name = best_costumer_grouped.salesrep_name
+LEFT JOIN amount_candy_grouped ON Best_rep.Name = amount_candy_grouped.salesrep_name
+ORDER BY discrepancy DESC
+LIMIT 1;
+
+```
+
+```{r}
+#| echo: false
+print(Q2[,c(1,2,4,6)])
+```
